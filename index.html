@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="hu">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Irodai Esemény Rögzítő (v2)</title>
+    <!-- Tailwind CSS betöltése -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js (Grafikon könyvtár) betöltése -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- jsPDF (PDF generáló) és html2canvas (HTML "fényképező") -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <!-- Supabase kliens betöltése -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        /* Egyedi "Inter" betűtípus használata */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .btn-press-feedback {
+            transform: scale(0.95);
+            opacity: 0.7;
+            transition: all 0.1s ease-out;
+        }
+
+        #loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Gomb stílus a városválasztóhoz */
+        .city-btn {
+            transition: all 0.2s ease-in-out;
+        }
+
+        .city-btn:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Polling indicator */
+        .polling-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .polling-active {
+            background-color: #10b981;
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+            animation: pulse 2s infinite;
+        }
+
+        .polling-inactive {
+            background-color: #ef4444;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* KÉRÉS: Város-specifikus kártya szegély */
+        #main-card.border-gyor {
+            border: 1px solid #22c55e;
+        }
+
+        /* green-500 */
+        #main-card.border-kaposvar {
+            border: 1px solid #3b82f6;
+        }
+
+        /* blue-500 */
+        #main-card.border-pecs {
+            border: 1px solid #a855f7;
+        }
+
+        /* purple-500 */
+    </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- KÉRÉS: ID hozzáadva a fő kártyához -->
+    <div id="main-card" class="w-full max-w-4xl bg-white rounded-2xl shadow-xl p-6 md:p-10">
+
+        <!-- ÚJ NÉZET: VÁROS VÁLASZTÓ -->
+        <div id="city-selection-view">
+            <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">Válassz várost</h1>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <button data-city="gyor"
+                    class="city-btn bg-gradient-to-r from-green-500 to-green-600 text-white p-8 rounded-xl shadow-lg">
+                    <span class="text-2xl font-semibold">Győr</span>
+                </button>
+                <button data-city="kaposvar"
+                    class="city-btn bg-gradient-to-r from-blue-500 to-blue-600 text-white p-8 rounded-xl shadow-lg">
+                    <span class="text-2xl font-semibold">Kaposvár</span>
+                </button>
+                <button data-city="pecs"
+                    class="city-btn bg-gradient-to-r from-purple-500 to-purple-600 text-white p-8 rounded-xl shadow-lg">
+                    <span class="text-2xl font-semibold">Pécs</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 1. NÉZET: FELHASZNÁLÓI FELÜLET (RÖGZÍTÉS) -->
+        <div id="user-view" class="hidden">
+            <!-- Betöltésjelző (most már a user-view-n belül van) -->
+            <div id="loading-overlay" class="text-center py-20">
+                <div id="loading-spinner" class="mx-auto mb-4"></div>
+                <p class="text-lg font-semibold text-gray-600">Csatlakozás az adatbázishoz...</p>
+                <p id="loading-city-name" class="text-md text-gray-500 mt-2"></p>
+            </div>
+
+            <!-- A tényleges tartalom, alapból rejtve -->
+            <div id="user-content" class="hidden">
+                <div class="flex justify-between items-center mb-8">
+                    <h1 class="text-3xl font-bold text-gray-800">Esemény Rögzítése</h1>
+                    <!-- Város és váltás gomb -->
+                    <div class="flex items-center">
+                        <span id="current-city-display" class="text-lg font-semibold text-gray-700"></span>
+                        <span id="polling-indicator" class="polling-indicator polling-inactive"
+                            title="Szinkronizáció állapota"></span>
+                        <button id="change-city-btn"
+                            class="ml-3 text-sm text-blue-600 hover:underline">(Váltás)</button>
+                    </div>
+                </div>
+
+                <!-- Utolsó frissítés időpontja -->
+                <div class="text-center mb-2">
+                    <p id="last-sync-time" class="text-xs text-gray-500"></p>
+                </div>
+
+                <!-- FEJLESZTÉS: Visszajelző üzenet (pozíció) -->
+                <div class="relative h-6 mb-4">
+                    <div id="feedback-message"
+                        class="absolute inset-0 text-center font-semibold transition-opacity duration-300 opacity-0">
+                    </div>
+                </div>
+
+                <!-- Gombok rácsban -->
+                <div id="task-buttons" class="grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                    <!-- Task 1 -->
+                    <button data-task-type="ujmegrendeles"
+                        class="task-btn relative bg-blue-600 text-white p-6 rounded-xl shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Új megrendelés</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                    <!-- Task 2 -->
+                    <button data-task-type="huseghosszabbitas"
+                        class="task-btn relative bg-sky-600 text-white p-6 rounded-xl shadow-lg hover:bg-sky-700 focus:outline-none focus:ring-4 focus:ring-sky-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Hűséghosszabbítás / Csomagváltás</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                    <!-- Task 3 -->
+                    <button data-task-type="hibabejelentes"
+                        class="task-btn relative bg-red-600 text-white p-6 rounded-xl shadow-lg hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Hibabejelentés</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                    <!-- Task 4 -->
+                    <button data-task-type="erdeklodes"
+                        class="task-btn relative bg-yellow-500 text-white p-6 rounded-xl shadow-lg hover:bg-yellow-600 focus:outline-none focus:ring-4 focus:ring-yellow-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Érdeklődés</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                    <!-- Task 5 -->
+                    <button data-task-type="eszkozleadas"
+                        class="task-btn relative bg-gray-600 text-white p-6 rounded-xl shadow-lg hover:bg-gray-700 focus:outline-none focus:ring-4 focus:ring-gray-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Eszközleadás</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                    <!-- Task 6 -->
+                    <button data-task-type="lemondas"
+                        class="task-btn relative bg-purple-600 text-white p-6 rounded-xl shadow-lg hover:bg-purple-700 focus:outline-none focus:ring-4 focus:ring-purple-300 transition-all duration-200 transform hover:scale-105">
+                        <span class="text-lg font-semibold">Lemondás</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+
+                    <!-- ÚJ GOMB (Task 7) -->
+                    <!-- MÓDOSÍTÁS: 'lg:col-start-2' hozzáadva a PC-nézetes középre igazításhoz -->
+                    <button data-task-type="szamlabefizetes"
+                        class="task-btn relative bg-green-600 text-white p-6 rounded-xl shadow-lg hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300 transition-all duration-200 transform hover:scale-105 lg:col-start-2">
+                        <span class="text-lg font-semibold">Számlabefizetés</span>
+                        <span
+                            class="task-counter absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-white hidden">0</span>
+                    </button>
+                </div>
+
+                <!-- FEJLESZTÉS: Offline várólista jelző -->
+                <div id="offline-queue-indicator" class="text-center mt-4 text-sm text-yellow-700 font-medium hidden">
+                    <span id="offline-queue-count">0</span> nem szinkronizált esemény. Kapcsolódás...
+                </div>
+
+                <!-- Admin nézet gomb -->
+                <div class="text-center mt-12">
+                    <button id="show-admin-btn"
+                        class="text-gray-600 hover:text-blue-600 font-semibold py-2 px-4 rounded-lg transition-colors duration-200">
+                        - Admin Nézet -
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. NÉZET: ADMIN FELÜLET (STATISZTIKA) -->
+        <div id="admin-view" class="hidden">
+            <!-- MÓDOSÍTÁS: Fejléc konténer a vissza gombhoz és a címhez -->
+            <div class="relative mb-4">
+                <button id="back-to-user-btn-top"
+                    class="absolute top-0 left-0 flex items-center text-sm text-blue-600 hover:text-blue-800 hover:underline p-2 rounded-lg group z-10">
+                    <!-- Beágyazott SVG nyíl -->
+                    <svg class="w-5 h-5 mr-1 group-hover:-translate-x-1 transition-transform duration-200" fill="none"
+                        stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                    <span>Vissza a rögzítéshez</span>
+                </button>
+                <h1 class="text-3xl font-bold text-center text-gray-800 pt-2">Admin Statisztika</h1>
+            </div>
+
+            <!-- ÚJ: Városválasztó filter -->
+            <div class="mb-6 max-w-xs mx-auto">
+                <label for="admin-city-filter" class="block text-sm font-medium text-gray-700 mb-1 text-center">Város
+                    szűrő</label>
+                <select id="admin-city-filter"
+                    class="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    <option value="gyor">Győr</option>
+                    <option value="kaposvar">Kaposvár</option>
+                    <option value="pecs">Pécs</option>
+                    <option value="osszesitve">Összesítve</option>
+                </select>
+            </div>
+
+            <!-- Időszak választó fülek -->
+            <div class="flex justify-center space-x-2 mb-6 border-b-2 border-gray-200">
+                <button data-period="daily"
+                    class="period-btn px-6 py-3 font-semibold text-gray-500 border-b-4 border-transparent hover:text-blue-600">Napi</button>
+                <button data-period="weekly"
+                    class="period-btn px-6 py-3 font-semibold text-gray-500 border-b-4 border-transparent hover:text-blue-600">Heti</button>
+                <button data-period="monthly"
+                    class="period-btn px-6 py-3 font-semibold text-gray-500 border-b-4 border-transparent hover:text-blue-600">Havi</button>
+                <button data-period="custom"
+                    class="period-btn px-6 py-3 font-semibold text-gray-500 border-b-4 border-transparent hover:text-blue-600">Egyéni</button>
+            </div>
+
+            <!-- ÚJ: Egyéni dátum választó (Alapból rejtve) -->
+            <div id="custom-date-range"
+                class="hidden mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200 text-center">
+                <h4 class="text-sm font-semibold text-gray-700 mb-3">Válassz időszakot</h4>
+                <div class="flex flex-col sm:flex-row gap-3 justify-center items-center">
+                    <div class="flex flex-col text-left">
+                        <label for="custom-start-date" class="text-xs text-gray-500 mb-1">Kezdő dátum</label>
+                        <input type="date" id="custom-start-date"
+                            class="p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div class="flex flex-col text-left">
+                        <label for="custom-end-date" class="text-xs text-gray-500 mb-1">Záró dátum</label>
+                        <input type="date" id="custom-end-date"
+                            class="p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <button id="custom-query-btn"
+                        class="mt-4 sm:mt-0 sm:ml-2 bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors duration-200 h-[42px] self-end">
+                        Lekérdezés
+                    </button>
+                </div>
+                <p id="custom-date-error" class="text-red-500 text-sm mt-2 hidden"></p>
+            </div>
+
+            <!-- Betöltésjelző az admin panelen -->
+            <div id="admin-loading" class="text-center py-10 hidden">
+                <div id="loading-spinner" class="mx-auto mb-4"></div>
+                <p class="text-lg font-semibold text-gray-600">Adatok lekérdezése...</p>
+            </div>
+
+            <!-- Riport tartalma -->
+            <div id="admin-report-area">
+                <h3 id="report-title" class="text-xl font-semibold text-center text-gray-700 mb-6"></h3>
+                <div class="mb-8 w-full max-w-2xl mx-auto">
+                    <!-- FEJLESZTÉS: A PDF generáláshoz ide kerül a statikus kép -->
+                    <canvas id="report-chart"></canvas>
+                </div>
+                <div id="report-content" class="overflow-x-auto"></div>
+            </div>
+
+            <!-- ÚJ: Nap Törlése Szekció (csak Napi nézetben) -->
+            <div id="delete-day-section"
+                class="mt-10 p-6 bg-red-50 border-2 border-red-200 rounded-lg max-w-2xl mx-auto hidden">
+                <h4 class="text-lg font-semibold text-red-800 mb-3 text-center">Nap Törlése</h4>
+                <p id="delete-warning-message" class="text-sm text-center text-red-700 mb-4">
+                    Figyelem: Ez a művelet véglegesen törli a kivélasztott nap adatait!
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 justify-center items-center">
+                    <input type="date" id="delete-date-input" class="p-2 border border-gray-300 rounded-lg">
+                    <button id="delete-day-btn"
+                        class="bg-red-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-red-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Törlés
+                    </button>
+                </div>
+                <div id="delete-feedback" class="text-center h-4 mt-3 text-sm font-medium"></div>
+            </div>
+
+            <!-- PDF Export gomb -->
+            <div class="text-center mt-8">
+                <button id="download-pdf-btn"
+                    class="bg-green-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-green-700 transition-colors duration-200">
+                    Riport PDF Letöltése
+                </button>
+                <div id="pdf-loading-message" class="text-gray-600 h-4 mt-2 text-sm"></div>
+            </div>
+
+            <!-- Vissza gomb -->
+            <div class="text-center mt-6">
+                <button id="back-to-user-btn"
+                    class="bg-gray-700 text-white font-semibold py-2 px-6 rounded-lg hover:bg-gray-800 transition-colors duration-200">
+                    Vissza a rögzítéshez
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // === UI ELEMEK ===
+        const mainCard = document.getElementById('main-card'); // KÉRÉS: Fő kártya
+        const citySelectionView = document.getElementById('city-selection-view');
+        const userView = document.getElementById('user-view');
+        const adminView = document.getElementById('admin-view');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingCityName = document.getElementById('loading-city-name');
+        const userContent = document.getElementById('user-content');
+        const currentCityDisplay = document.getElementById('current-city-display');
+        const changeCityBtn = document.getElementById('change-city-btn');
+        const adminLoading = document.getElementById('admin-loading');
+        const showAdminBtn = document.getElementById('show-admin-btn');
+        const backToUserBtn = document.getElementById('back-to-user-btn');
+        const backToUserBtnTop = document.getElementById('back-to-user-btn-top'); // ÚJ
+        const taskButtonsContainer = document.getElementById('task-buttons');
+        const feedbackMessage = document.getElementById('feedback-message');
+        const reportContent = document.getElementById('report-content');
+        const reportTitle = document.getElementById('report-title');
+        const periodButtons = document.querySelectorAll('.period-btn');
+        const reportChartCanvas = document.getElementById('report-chart');
+        let reportChartInstance = null;
+        const downloadPdfBtn = document.getElementById('download-pdf-btn');
+        const pdfLoadingMessage = document.getElementById('pdf-loading-message');
+        const pollingIndicator = document.getElementById('polling-indicator');
+        const lastSyncTime = document.getElementById('last-sync-time');
+
+        // Admin filter
+        const adminCityFilter = document.getElementById('admin-city-filter');
+
+        // Delete section
+        const deleteDaySection = document.getElementById('delete-day-section');
+        const deleteDateInput = document.getElementById('delete-date-input');
+        const deleteDayBtn = document.getElementById('delete-day-btn');
+        const deleteFeedback = document.getElementById('delete-feedback');
+        const deleteWarningMessage = document.getElementById('delete-warning-message');
+
+        // ÚJ: Custom Date Elements
+        const customDateRange = document.getElementById('custom-date-range');
+        const customStartDate = document.getElementById('custom-start-date');
+        const customEndDate = document.getElementById('custom-end-date');
+        const customQueryBtn = document.getElementById('custom-query-btn');
+        const customDateError = document.getElementById('custom-date-error');
+
+        // FEJLESZTÉS: Offline Queue UI
+        const offlineQueueIndicator = document.getElementById('offline-queue-indicator');
+        const offlineQueueCount = document.getElementById('offline-queue-count');
+
+        // === ALAP KONFIGURÁCIÓ ===
+        // --- MÓDOSÍTÁS KEZDETE ---
+        const TASK_NAMES = {
+            ujmegrendeles: "Új megrendelés",
+            huseghosszabbitas: "Hűséghosszabbítás/csomagváltás",
+            hibabejelentes: "Hibabejelentés",
+            erdeklodes: "Érdeklődés",
+            eszkozleadas: "Eszközleadás",
+            lemondas: "Lemondás",
+            szamlabefizetes: "Számlabefizetés" // ÚJ
+        };
+        // --- MÓDOSÍTÁS VÉGE ---
+
+        const CITY_NAMES = {
+            gyor: "Győr",
+            kaposvar: "Kaposvár",
+            pecs: "Pécs",
+            osszesitve: "Összesítve"
+        };
+
+        // --- MÓDOSÍTÁS KEZDETE ---
+        const createEmptyDayData = () => ({
+            ujmegrendeles: 0, huseghosszabbitas: 0, hibabejelentes: 0,
+            erdeklodes: 0, eszkozleadas: 0, lemondas: 0,
+            szamlabefizetes: 0 // ÚJ
+        });
+        // --- MÓDOSÍTÁS VÉGE ---
+
+        let todayData = createEmptyDayData();
+
+        // === SUPABASE INICIALIZÁLÁS ===
+        const SUPABASE_URL = 'https://kqsxwnrlelufjdgsfryr.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtxc3h3bnJsZWx1ZmpkZ3NmcnlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMxMDc1NzMsImV4cCI6MjA3ODY4MzU3M30.ye-rRAjtgH-ds9cAv7bQdXV_CtlaGNIgkgOCIiBM5qE';
+
+        let supabase;
+        let isSupabaseReady = false;
+        let selectedCity = null;
+
+        // Polling változók
+        let pollingTimeoutId = null;
+        let isPolling = false;
+        let isFetchingData = false;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 10;
+        const BASE_POLLING_INTERVAL = 5000; // 5 másodperc
+
+        // FEJLESZTÉS: Feedback és Offline Queue
+        let feedbackTimeoutId = null;
+        const OFFLINE_QUEUE_KEY = 'supabase_offline_queue';
+
+        // Segédfüggvény a mai dátumhoz (YYYY-MM-DD)
+        function getTodayString() {
+            return new Date().toISOString().split('T')[0];
+        }
+
+        // Segédfüggvény az utolsó frissítés időpontjához
+        function updateLastSyncTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            lastSyncTime.textContent = `Utolsó szinkronizáció: ${timeString}`;
+        }
+
+        // === ÚJ SEGÉDFÜGGVÉNYEK A JELENTÉSHEZ ===
+
+        /**
+         * Visszaadja az aktuális hét (H-V) első és utolsó napját YYYY-MM-DD formátumban
+         */
+        function getWeekRange() {
+            const now = new Date();
+            // Hétfő = 0, Vasárnap = 6 (ISO 8601-nek megfelelő hétkezdés)
+            const currentDayOfWeek = (now.getDay() === 0) ? 6 : now.getDay() - 1;
+
+            const mondayDate = new Date(now);
+            // Dátum beállítása az aktuális nap mínusz a hét napja (hétfőre ugrik)
+            mondayDate.setDate(now.getDate() - currentDayOfWeek);
+            const mondayString = mondayDate.toISOString().split('T')[0];
+
+            const sundayDate = new Date(mondayDate);
+            // Hétfő + 6 nap = Vasárnap
+            sundayDate.setDate(mondayDate.getDate() + 6);
+            const sundayString = sundayDate.toISOString().split('T')[0];
+
+            return { start: mondayString, end: sundayString };
+        }
+
+        /**
+         * Visszaadja az aktuális hónap első napját és a következő hónap első napját
+         * (a Supabase 'lt' - "less than" - lekérdezéshez)
+         */
+        function getMonthRange() {
+            const now = new Date();
+            const monthStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+            const monthStartString = monthStartDate.toISOString().split('T')[0];
+
+            // A Supabase 'lt' (less than) query-hez a következő hónap első napja kell
+            const nextMonthDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            const nextMonthStartString = nextMonthDate.toISOString().split('T')[0];
+
+            // Címhez a hónap neve
+            const monthName = now.toLocaleString('hu-HU', { month: 'long' });
+            const year = now.getFullYear();
+
+            return {
+                start: monthStartString,
+                end: nextMonthStartString, // Ez valójában a JÖVŐ hónap első napja
+                displayName: `${year}. ${monthName}`
+            };
+        }
+
+        // === FEJLESZTÉS: Offline Queue Kezelő Függvények ===
+
+        /**
+         * Visszaadja az offline várólistát a localStorage-ból
+         */
+        function getOfflineQueue() {
+            try {
+                const queue = localStorage.getItem(OFFLINE_QUEUE_KEY);
+                return queue ? JSON.parse(queue) : [];
+            } catch (e) {
+                console.error("Hiba az offline várólista olvasása közben:", e);
+                return [];
+            }
+        }
+
+        /**
+         * Elmenti az offline várólistát a localStorage-ba
+         */
+        function saveOfflineQueue(queue) {
+            try {
+                localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+                updateOfflineQueueIndicator();
+            } catch (e) {
+                console.error("Hiba az offline várólista mentése közben:", e);
+            }
+        }
+
+        /**
+         * Hozzáad egy elemet az offline várólistához
+         */
+        function addToOfflineQueue(taskType, amount) {
+            const queue = getOfflineQueue();
+            const newItem = {
+                id: crypto.randomUUID(),
+                taskType,
+                amount,
+                city: selectedCity,
+                timestamp: Date.now()
+            };
+            queue.push(newItem);
+            saveOfflineQueue(queue);
+            console.log(`📦 Elem hozzáadva az offline várólistához: ${taskType} (${amount})`);
+        }
+
+        /**
+         * Frissíti az offline várólista UI jelzőjét
+         */
+        function updateOfflineQueueIndicator() {
+            const queue = getOfflineQueue();
+            if (queue.length > 0) {
+                offlineQueueCount.textContent = queue.length;
+                offlineQueueIndicator.classList.remove('hidden');
+            } else {
+                offlineQueueIndicator.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Feldolgozza az offline várólistát
+         */
+        async function processOfflineQueue() {
+            if (!isSupabaseReady) return;
+
+            let queue = getOfflineQueue();
+            if (queue.length === 0) {
+                updateOfflineQueueIndicator();
+                return;
+            }
+
+            console.log(`🔄 Offline várólista feldolgozása (${queue.length} elem)...`);
+            showFeedback(`Offline elemek szinkronizálása (${queue.length})...`, "text-blue-600");
+
+            // Szűrjük ki a nem ehhez a városhoz tartozó elemeket (bár elvileg nem lehet)
+            const cityQueue = queue.filter(item => item.city === selectedCity);
+            const otherCitiesQueue = queue.filter(item => item.city !== selectedCity);
+
+            let failedItems = [];
+
+            for (const item of cityQueue) {
+                try {
+                    const { error } = await supabase.rpc('plaza_increment_stat', {
+                        stat_name: item.taskType,
+                        increment_val: item.amount,
+                        city_name: item.city
+                    });
+
+                    if (error) throw error;
+
+                    console.log(`✅ Offline elem sikeresen szinkronizálva: ${item.taskType} (${item.amount})`);
+                } catch (error) {
+                    console.error(`❌ Offline elem szinkronizálása sikertelen: ${item.id}`, error);
+                    failedItems.push(item);
+                }
+            }
+
+            // Csak a sikeresen feldolgozott elemeket vesszük ki, a sikerteleneket + más városokét bent hagyjuk
+            const newQueue = [...otherCitiesQueue, ...failedItems];
+            saveOfflineQueue(newQueue);
+
+            if (failedItems.length === 0 && cityQueue.length > 0) {
+                showFeedback("Minden offline elem szinkronizálva!", "text-green-600");
+            } else if (failedItems.length > 0) {
+                showFeedback(`Nem sikerült minden elemet szinkronizálni (${failedItems.length} maradt).`, "text-orange-600");
+            }
+
+            // Várólista feldolgozás után frissítjük az adatokat
+            if (cityQueue.length > 0) {
+                await new Promise(resolve => setTimeout(resolve, 500)); // Várjunk a replikációra
+                await fetchInitialData();
+            }
+        }
+
+        /**
+         * KÉRÉS: Új segédfüggvény a kártya szegélyének beállításához
+         */
+        function setCardBorder(city) {
+            mainCard.classList.remove('border-gyor', 'border-kaposvar', 'border-pecs');
+            if (city) {
+                mainCard.classList.add(`border-${city}`);
+            }
+        }
+
+        /**
+         * Fő inicializáló függvény (App indulás)
+         */
+        function initApp() {
+            selectedCity = localStorage.getItem('selectedCity');
+            setCardBorder(selectedCity); // KÉRÉS: Szegély beállítása
+
+            if (selectedCity) {
+                citySelectionView.classList.add('hidden');
+                userView.classList.remove('hidden');
+                loadingCityName.textContent = `Helyszín: ${CITY_NAMES[selectedCity]}`;
+                currentCityDisplay.textContent = CITY_NAMES[selectedCity];
+                initSupabase();
+            } else {
+                citySelectionView.classList.remove('hidden');
+                userView.classList.add('hidden');
+                adminView.classList.add('hidden');
+            }
+            // Frissítsük az indikátort induláskor
+            updateOfflineQueueIndicator();
+        }
+
+        /**
+         * A Supabase kapcsolatot inicializálja
+         */
+        async function initSupabase() {
+            try {
+                if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                    throw new Error("Hiányzó Supabase URL vagy Anon Key.");
+                }
+
+                if (!supabase) {
+                    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                    console.log("✅ Supabase kliens inicializálva.");
+                }
+
+                // Eltároljuk a korábbi státuszt
+                const wasOffline = !isSupabaseReady;
+                const success = await fetchInitialData();
+
+                if (!success) {
+                    console.log("⚠️ Kezdeti adatlekérés sikertelen, exponenciális backoff újrapróbálkozás...");
+                    reconnectAttempts++;
+                    const backoffDelay = Math.min(5000 * Math.pow(2, reconnectAttempts - 1), 30000);
+
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        if (!userContent.classList.contains('hidden')) {
+                            // Maradjon látható
+                            showFeedback(`Kapcsolat sikertelen (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}). Újrapróbálkozás ${backoffDelay / 1000}s múlva...`, "text-orange-600", true);
+                        }
+                        setTimeout(initSupabase, backoffDelay);
+                    } else {
+                        showFeedback("Kapcsolat sikertelen. Kérlek frissítsd az oldalt.", "text-red-600", true);
+                    }
+                    return;
+                }
+
+                console.log("✅ Kezdeti adatlekérés sikeres, polling indítása.");
+                reconnectAttempts = 0;
+
+                // FEJLESZTÉS: Csak akkor jelezzük, ha offline-ból jött vissza
+                if (wasOffline) {
+                    showFeedback("Kapcsolat helyreállt!", "text-green-600");
+                    // Indítsuk el az offline várólista feldolgozását
+                    await processOfflineQueue();
+                }
+
+                // KRITIKUS JAVÍTÁS: Recursive setTimeout polling indítása
+                startPolling();
+
+            } catch (error) {
+                console.error("❌ Supabase kritikus inicializálási hiba:", error);
+                isSupabaseReady = false;
+                todayData = createEmptyDayData();
+                updateButtonCounts();
+                loadingOverlay.classList.add('hidden');
+                userContent.classList.remove('hidden');
+                showFeedback("Kritikus hiba a kapcsolódásban.", "text-red-600", true); // Sticky
+                updatePollingIndicator(false);
+            }
+        }
+
+        // ... (Városválasztó és váltás gomb eseménykezelői változatlanok) ...
+
+        citySelectionView.addEventListener('click', (e) => {
+            const button = e.target.closest('.city-btn');
+            if (!button) return;
+
+            selectedCity = button.dataset.city;
+            localStorage.setItem('selectedCity', selectedCity);
+            initApp(); // Ez már tartalmazza a setCardBorder hívást
+        });
+
+        changeCityBtn.addEventListener('click', () => {
+            stopPolling();
+            localStorage.removeItem('selectedCity');
+            // setCardBorder(null); // Nem szükséges, mert az oldal újratölt
+            window.location.reload();
+        });
+
+        /**
+         * KRITIKUS JAVÍTÁS: Recursive setTimeout polling
+         */
+        function startPolling() {
+            if (isPolling) {
+                console.log("⏳ Polling már fut.");
+                return;
+            }
+
+            isPolling = true;
+            updatePollingIndicator(true);
+            console.log("🔄 Polling elindítva (recursive setTimeout)");
+            scheduleNextPoll();
+        }
+
+        /**
+         * JAVÍTÁS: Következő poll ütemezése
+         */
+        function scheduleNextPoll() {
+            if (!isPolling) return;
+
+            // Ha admin nézetben van, ne pollingoljon
+            if (!adminView.classList.contains('hidden')) {
+                console.log("📊 Admin nézet aktív, polling szünetel.");
+                pollingTimeoutId = setTimeout(scheduleNextPoll, BASE_POLLING_INTERVAL);
+                return;
+            }
+
+            pollingTimeoutId = setTimeout(async () => {
+                await pollData();
+                scheduleNextPoll(); // Recursive hívás
+            }, BASE_POLLING_INTERVAL);
+        }
+
+        /**
+         * JAVÍTÁS: Adatok lekérése polling során
+         */
+        async function pollData() {
+            if (isFetchingData) {
+                console.log("⏳ Előző fetch még fut, kihagyva.");
+                return;
+            }
+
+            try {
+                isFetchingData = true;
+                const wasOffline = !isSupabaseReady;
+                const success = await fetchInitialData();
+
+                if (success) {
+                    updatePollingIndicator(true);
+                    reconnectAttempts = 0;
+
+                    // FEJLESZTÉS: Ha offline-ból jöttünk vissza
+                    if (wasOffline) {
+                        showFeedback("Kapcsolat helyreállt!", "text-green-600");
+                        await processOfflineQueue();
+                    }
+
+                } else {
+                    updatePollingIndicator(false);
+                    reconnectAttempts++;
+
+                    if (reconnectAttempts >= 3 && isSupabaseReady) { // Csak akkor jelezzük, ha már volt kapcsolat
+                        showFeedback(`Kapcsolat instabil (${reconnectAttempts} sikertelen próbálkozás)`, "text-orange-600", true); // Sticky
+                    }
+                }
+            } catch (error) {
+                console.error("❌ Polling hiba:", error);
+                updatePollingIndicator(false);
+            } finally {
+                isFetchingData = false;
+            }
+        }
+
+        /**
+         * JAVÍTÁS: Polling leállítása
+         */
+        function stopPolling() {
+            console.log("🛑 Polling leállítva.");
+            isPolling = false;
+            if (pollingTimeoutId) {
+                clearTimeout(pollingTimeoutId);
+                pollingTimeoutId = null;
+            }
+            updatePollingIndicator(false);
+        }
+
+        /**
+         * ÚJ: Polling indikátor frissítése
+         */
+        function updatePollingIndicator(isActive) {
+            if (isActive) {
+                pollingIndicator.classList.remove('polling-inactive');
+                pollingIndicator.classList.add('polling-active');
+                pollingIndicator.title = 'Szinkronizáció aktív';
+            } else {
+                pollingIndicator.classList.remove('polling-active');
+                pollingIndicator.classList.add('polling-inactive');
+                pollingIndicator.title = 'Szinkronizáció inaktív';
+            }
+        }
+
+        /**
+         * JAVÍTVA: Lekéri a mai nap kezdeti adatait
+         */
+        async function fetchInitialData() {
+            if (!supabase) return false;
+
+            const today = getTodayString();
+            try {
+                const { data, error } = await supabase
+                    .from('plaza_daily_stats')
+                    .select('*')
+                    .eq('date', today)
+                    .eq('city', selectedCity)
+                    .single();
+
+                // Ha a kapcsolat megszakadt
+                if (error && error.code !== 'PGRST116') {
+                    console.error("❌ Adat lekérési hiba:", error.message);
+                    if (isSupabaseReady) {
+                        showFeedback("Kapcsolat megszakadt.", "text-orange-600", true); // Sticky
+                    }
+                    isSupabaseReady = false; // Állítsuk be itt
+                    return false;
+                }
+
+                // Ha a kapcsolat helyreállt
+                if (!isSupabaseReady) {
+                    // showFeedback("Kapcsolat helyreállt!", "text-green-600"); // Ezt a hívó függvény kezeli
+                    isSupabaseReady = true; // Állítsuk be itt
+                }
+
+                if (data) {
+                    todayData = { ...createEmptyDayData(), ...data };
+                } else {
+                    todayData = createEmptyDayData();
+                }
+
+                updateButtonCounts();
+                updateLastSyncTime();
+                loadingOverlay.classList.add('hidden');
+                userContent.classList.remove('hidden');
+                return true;
+            } catch (err) {
+                console.error("❌ Hálózati hiba:", err);
+                isSupabaseReady = false; // Hálózati hiba esetén is offline-ba kerülünk
+                return false;
+            }
+        }
+
+        // === NÉZETVÁLTÓ LOGIKA (Admin) ===
+        showAdminBtn.addEventListener('click', async (e) => {
+            // --- MÓDOSÍTÁS KEZDETE ---
+            // Hozzáadva a metaKey (Command) ellenőrzés is a macOS kompatibilitásért
+            if (!((e.ctrlKey || e.metaKey) && e.altKey)) { return; }
+            // --- MÓDOSÍTÁS VÉGE ---
+
+            adminCityFilter.value = selectedCity;
+
+            userView.classList.add('hidden');
+            adminView.classList.remove('hidden');
+            setActivePeriodButton('daily');
+            await generateReport('daily');
+        });
+
+        // MÓDOSÍTÁS: Eseménykezelő függvény a vissza gombokhoz
+        const handleBackToUser = () => {
+            adminView.classList.add('hidden');
+            userView.classList.remove('hidden');
+        };
+
+        backToUserBtn.addEventListener('click', handleBackToUser);
+        backToUserBtnTop.addEventListener('click', handleBackToUser); // ÚJ
+
+        // === ADATRÖGZÍTŐ LOGIKA (Várossal) ===
+        // BAL KLIKK
+        taskButtonsContainer.addEventListener('click', (e) => {
+            const button = e.target.closest('.task-btn');
+            if (!button) return;
+            const taskType = button.dataset.taskType;
+            if (taskType) {
+                button.classList.add('btn-press-feedback');
+                setTimeout(() => button.classList.remove('btn-press-feedback'), 150);
+
+                const currentCount = todayData[taskType] || 0;
+                todayData[taskType] = currentCount + 1;
+                updateButtonCounts();
+                showFeedback("Sikeresen rögzítve!", "text-green-600");
+
+                updateTaskCount(taskType, 1); // Nem kell await, a háttérben fut
+            }
+        });
+
+        // JOBB KLIKK
+        taskButtonsContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const button = e.target.closest('.task-btn');
+            if (!button) return;
+            const taskType = button.dataset.taskType;
+            if (taskType) {
+                button.classList.add('btn-press-feedback');
+                setTimeout(() => button.classList.remove('btn-press-feedback'), 150);
+
+                const currentCount = todayData[taskType] || 0;
+                if (currentCount <= 0) {
+                    showFeedback("Az érték már 0!", "text-orange-600");
+                    return;
+                }
+                todayData[taskType] = currentCount - 1;
+                updateButtonCounts();
+                showFeedback("Érték csökkentve!", "text-orange-600");
+
+                updateTaskCount(taskType, -1); // Nem kell await, a háttérben fut
+            }
+        });
+
+        /**
+         * FEJLESZTÉS: Visszajelző üzenet
+         * @param {string} message - A megjelenítendő üzenet.
+         * @param {string} colorClass - Tailwind színosztály (pl. 'text-green-600').
+         * @param {boolean} [sticky=false] - Ha true, az üzenet nem tűnik el automatikusan.
+         */
+        function showFeedback(message, colorClass = 'text-green-600', sticky = false) {
+            // Töröljük az előző időzítőt, ha volt
+            if (feedbackTimeoutId) {
+                clearTimeout(feedbackTimeoutId);
+                feedbackTimeoutId = null;
+            }
+
+            feedbackMessage.textContent = message;
+            feedbackMessage.className = "absolute inset-0 text-center font-semibold transition-opacity duration-300 opacity-100"; // Reset
+            feedbackMessage.classList.add(colorClass);
+
+            // Csak akkor tűnjön el, ha nem "sticky"
+            if (!sticky) {
+                feedbackTimeoutId = setTimeout(() => {
+                    if (feedbackMessage.textContent === message) { // Csak ha még mindig ugyanaz az üzenet
+                        feedbackMessage.classList.remove('opacity-100');
+                        feedbackTimeoutId = null;
+                    }
+                }, 3000); // 3 másodpercig látszik
+            }
+        }
+
+        /**
+         * KRITIKUS JAVÍTÁS + OFFLINE FEJLESZTÉS
+         * Elküldi a frissítést, vagy várólistába helyezi, ha offline van.
+         */
+        async function updateTaskCount(taskType, amount) {
+            if (!isSupabaseReady) {
+                console.log("⚠️ Offline mód: Hozzáadás a várólistához.");
+                showFeedback("Nincs kapcsolat, helyi rögzítés!", "text-orange-600", true); // Sticky
+                addToOfflineQueue(taskType, amount);
+                return;
+            }
+
+            try {
+                // Az RPC hívás elindul a háttérben (nincs await)
+                supabase.rpc('plaza_increment_stat', {
+                    stat_name: taskType,
+                    increment_val: amount,
+                    city_name: selectedCity
+                }).then(async ({ error }) => {
+                    if (error) {
+                        throw error;
+                    }
+
+                    console.log(`✅ RPC hívás sikeres: ${selectedCity} - ${taskType} ${amount}`);
+
+                    // KRITIKUS JAVÍTÁS: 500ms késleltetés a race condition elkerülésére
+                    // Mivel ez a .then() ágban van, nem blokkolja a UI-t
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await fetchInitialData(); // Frissítsük az adatokat
+
+                }).catch((error) => {
+                    // Ha az aszinkron hívás hibát dob
+                    console.error("❌ Supabase RPC hiba (aszinkron):", error);
+                    showFeedback("Adatbázis mentési hiba!", "text-red-600", true); // Sticky
+                    isSupabaseReady = false; // Kapcsolat elveszett
+
+                    // Mivel a mentés sikertelen volt, visszacsináljuk a UI változást
+                    // és hozzáadjuk az offline várólistához
+                    todayData[taskType] = (todayData[taskType] || 0) - amount;
+                    updateButtonCounts();
+                    addToOfflineQueue(taskType, amount);
+                });
+
+            } catch (error) {
+                // Ez a catch ág valószínűleg nem fog lefutni, de biztonság kedvéért
+                console.error("❌ Supabase RPC hiba (szinkron):", error);
+                showFeedback("Adatbázis mentési hiba!", "text-red-600", true); // Sticky
+                isSupabaseReady = false;
+                addToOfflineQueue(taskType, amount);
+            }
+        }
+
+        // updateButtonCounts (Változatlan)
+        function updateButtonCounts() {
+            Object.keys(TASK_NAMES).forEach(taskKey => {
+                const button = taskButtonsContainer.querySelector(`[data-task-type="${taskKey}"]`);
+                if (button) {
+                    const counterElement = button.querySelector('.task-counter');
+                    const count = todayData[taskKey] || 0;
+                    if (counterElement) {
+                        if (count > 0) {
+                            counterElement.textContent = count;
+                            counterElement.classList.remove('hidden');
+                        } else {
+                            counterElement.classList.add('hidden');
+                        }
+                    }
+                }
+            });
+        }
+
+        // === ADMIN STATISZTIKA LOGIKA (Városfilterrel) ===
+        // ... (Eseménykezelők és setActivePeriodButton változatlanok) ...
+
+        periodButtons.forEach(button => {
+            button.addEventListener('click', async () => {
+                const period = button.dataset.period;
+                setActivePeriodButton(period);
+                await generateReport(period);
+            });
+        });
+
+        adminCityFilter.addEventListener('change', async () => {
+            const currentPeriod = document.querySelector('.period-btn.text-blue-600').dataset.period || 'daily';
+            setActivePeriodButton(currentPeriod);
+            await generateReport(currentPeriod);
+        });
+
+        function setActivePeriodButton(activePeriod) {
+            periodButtons.forEach(btn => {
+                if (btn.dataset.period === activePeriod) {
+                    btn.classList.add('text-blue-600', 'border-blue-600');
+                    btn.classList.remove('text-gray-500', 'border-transparent');
+                } else {
+                    btn.classList.remove('text-blue-600', 'border-blue-600');
+                    btn.classList.add('text-gray-500', 'border-transparent');
+                }
+            });
+
+            // --- MÓDOSÍTÁS KEZDETE ---
+            // Kezeljük az Egyéni nézet UI elemeit
+            if (activePeriod === 'custom') {
+                customDateRange.classList.remove('hidden');
+                deleteDaySection.classList.add('hidden'); // Egyéni nézetben nincs törlés
+
+                // Ha nincs kitöltve a dátum, töltsük ki alapértelmezetten a mai nappal
+                if (!customStartDate.value) customStartDate.value = getTodayString();
+                if (!customEndDate.value) customEndDate.value = getTodayString();
+
+                return; // Kilépünk, mert a többi logika (törlés) ide nem kell
+            } else {
+                customDateRange.classList.add('hidden');
+
+                // Fontos: Töröljük a hibaüzenetet ha elnavigálunk
+                customDateError.classList.add('hidden');
+            }
+            // --- MÓDOSÍTÁS VÉGE ---
+
+            // --- MÓDOSÍTÁS KEZDETE ---
+            // Most már napi nézetben mindig látszik a törlés szekció
+            const cityFilter = adminCityFilter.value;
+            if (activePeriod === 'daily') {
+                deleteDaySection.classList.remove('hidden');
+                deleteDayBtn.disabled = false;
+
+                // Attól függően, hogy "Összesítve" vagy konkrét város van-e kiválasztva,
+                // más figyelmeztető üzenetet jelenítünk meg.
+                if (cityFilter === 'osszesitve') {
+                    deleteWarningMessage.textContent = `FIGYELEM: Ez a művelet véglegesen törli a kiválasztott nap adatait MINDHÁROM VÁROSBÓL!`;
+                } else {
+                    deleteWarningMessage.textContent = `Figyelem: Ez törli a kiválasztott nap adatait a(z) ${CITY_NAMES[cityFilter]} helyszínről!`;
+                }
+
+                if (!deleteDateInput.value) {
+                    deleteDateInput.value = getTodayString();
+                }
+            } else {
+                deleteDaySection.classList.add('hidden');
+            }
+            // --- MÓDOSÍTÁS VÉGE ---
+        }
+
+        /**
+         * Legenerálja a riportot (Figyelembe veszi a VÁROS filtert)
+         */
+        async function generateReport(period) {
+            adminLoading.classList.remove('hidden');
+            reportTitle.textContent = "";
+            reportContent.innerHTML = "";
+            if (reportChartInstance) reportChartInstance.destroy();
+
+            let aggregatedData = createEmptyDayData();
+            let title = "";
+
+            const cityFilter = adminCityFilter.value;
+
+            if (!isSupabaseReady) {
+                reportContent.innerHTML = "<p class='text-center text-orange-600'>Nincs adatbázis kapcsolat. Az adatok nem tölthetők be.</p>";
+                adminLoading.classList.add('hidden');
+                return;
+            }
+
+            try {
+                let reportData = [];
+                let query = supabase.from('plaza_daily_stats').select('*');
+
+                if (period === 'daily') {
+                    const today = getTodayString();
+                    title = "Mai statisztika";
+                    query = query.eq('date', today);
+                }
+
+                // --- MÓDOSÍTÁS KEZDETE ---
+                if (period === 'weekly') {
+                    const week = getWeekRange();
+                    // Cím formázása a kérésnek megfelelően
+                    title = `Aktuális hét (${week.start} - ${week.end})`;
+
+                    // A lekérdezés >= hétfő ÉS <= vasárnap
+                    query = query.gte('date', week.start).lte('date', week.end);
+                }
+                if (period === 'monthly') {
+                    const month = getMonthRange();
+                    title = `Havi statisztika (${month.displayName})`;
+
+                    // A lekérdezés >= hónap első napja ÉS < következő hónap első napja
+                    // (az 'end' a következő hónap első napja)
+                    query = query.gte('date', month.start).lt('date', month.end);
+                }
+
+                if (period === 'custom') {
+                    // Dátumok validálása
+                    const start = customStartDate.value;
+                    const end = customEndDate.value;
+
+                    if (!start || !end) {
+                        // Ha nincs kiválasztva dátum
+                        reportContent.innerHTML = "<p class='text-center text-gray-500'>Kérlek válassz ki egy időszakot és kattints a Lekérdezés gombra.</p>";
+                        adminLoading.classList.add('hidden');
+                        return;
+                    }
+
+                    if (start > end) {
+                        reportContent.innerHTML = "<p class='text-center text-red-500'>A kezdő dátum nem lehet későbbi, mint a záró dátum!</p>";
+                        adminLoading.classList.add('hidden');
+                        return;
+                    }
+
+                    title = `Egyéni időszak (${start} - ${end})`;
+                    query = query.gte('date', start).lte('date', end);
+                }
+                // --- MÓDOSÍTÁS VÉGE ---
+
+                if (cityFilter !== 'osszesitve') {
+                    query = query.eq('city', cityFilter);
+                    title += ` - ${CITY_NAMES[cityFilter]}`;
+                } else {
+                    title += ` - Összesítve`;
+                }
+
+                const { data, error } = await query;
+                if (error) throw error;
+                reportData = data;
+
+                // --- MÓDOSÍTÁS KEZDETE ---
+
+                // Beállítjuk a riport fő címét (pl. "Heti Statisztika - Összesítve")
+                reportTitle.textContent = title;
+
+                if (cityFilter !== 'osszesitve') {
+                    // Ha NEM összesített nézet, a régi logika fut:
+                    // 1. Aggregáljuk a (már városra szűrt) adatokat
+                    if (reportData && reportData.length > 0) {
+                        reportData.forEach(day => {
+                            aggregatedData = sumAggregates(aggregatedData, day);
+                        });
+                    }
+                    // 2. Létrehozunk EGY táblázatot
+                    reportContent.innerHTML = createReportTableHTML(aggregatedData, `Részletezés: ${CITY_NAMES[cityFilter]}`);
+                    // 3. Rendereljük a grafikont
+                    renderChart(aggregatedData, title);
+
+                } else {
+                    // Ha ÖSSZESÍTETT nézet, akkor fel kell dolgoznunk az adatokat városonként
+
+                    let totalAggregatedData = createEmptyDayData();
+                    let gyorAggregatedData = createEmptyDayData();
+                    let kaposvarAggregatedData = createEmptyDayData();
+                    let pecsAggregatedData = createEmptyDayData();
+
+                    if (reportData && reportData.length > 0) {
+                        reportData.forEach(day => {
+                            // 1. Mindig hozzáadjuk a fő összesítőhöz
+                            totalAggregatedData = sumAggregates(totalAggregatedData, day);
+
+                            // 2. Hozzáadjuk a megfelelő városi összesítőhöz
+                            if (day.city === 'gyor') {
+                                gyorAggregatedData = sumAggregates(gyorAggregatedData, day);
+                            } else if (day.city === 'kaposvar') {
+                                kaposvarAggregatedData = sumAggregates(kaposvarAggregatedData, day);
+                            } else if (day.city === 'pecs') {
+                                pecsAggregatedData = sumAggregates(pecsAggregatedData, day);
+                            }
+                        });
+                    }
+
+                    // Most rendereljük a HTML-t: 4 külön táblázat
+                    let html = createReportTableHTML(totalAggregatedData, "Összesített Eredmények");
+                    html += createReportTableHTML(gyorAggregatedData, "Részletezés: Győr");
+                    html += createReportTableHTML(kaposvarAggregatedData, "Részletezés: Kaposvár");
+                    html += createReportTableHTML(pecsAggregatedData, "Részletezés: Pécs");
+
+                    reportContent.innerHTML = html;
+
+                    // A grafikont továbbra is csak a teljes összesítésről rendereljük
+                    renderChart(totalAggregatedData, title);
+                }
+                // --- MÓDOSÍTÁS VÉGE ---
+
+            } catch (error) {
+                // --- MÓDOSÍTÁS KEZDETE (HIBÁS BLOKK CSERÉJE) ---
+                console.error("❌ Hiba a riport generálása közben:", error);
+                reportContent.innerHTML = "<p class='text-center text-red-600'>Hiba történt az adatok lekérdezése közben.</p>";
+            } finally {
+                adminLoading.classList.add('hidden');
+            }
+        } // <-- Ez a '}' zárja a generateReport() függvényt. A hibás '});' törölve.
+        // --- MÓDOSÍTÁS VÉGE ---
+
+        // --- MÓDOSÍTÁS KEZDETE: A TÖRLÉS LOGIKA VISSZAÁLLÍTÁSA ---
+        deleteDayBtn.addEventListener('click', async () => {
+            const dateToDelete = deleteDateInput.value;
+            const cityToDelete = adminCityFilter.value;
+
+            if (!dateToDelete) {
+                deleteFeedback.textContent = "Kérlek válassz egy dátumot!";
+                deleteFeedback.className = "text-center h-4 mt-3 text-sm font-medium text-red-600";
+                return;
+            }
+
+            // Megerősítő kérdés
+            let confirmed = false;
+            if (cityToDelete === 'osszesitve') {
+                confirmed = window.confirm(`Biztosan törlöd a(z) ${dateToDelete} napot MINDHÁROM VÁROSBÓL? Ez nem vonható vissza!`);
+            } else {
+                confirmed = window.confirm(`Biztosan törlöd a(z) ${dateToDelete} napot a(z) ${CITY_NAMES[cityToDelete]} helyszínről? Ez nem vonható vissza!`);
+            }
+
+            if (!confirmed) {
+                return;
+            }
+
+            deleteDayBtn.disabled = true;
+            deleteFeedback.textContent = "Törlés folyamatban...";
+            deleteFeedback.className = "text-center h-4 mt-3 text-sm font-medium text-gray-600";
+
+            try {
+                let rpcCall;
+                if (cityToDelete === 'osszesitve') {
+                    // Új RPC hívás a globális törléshez
+                    rpcCall = supabase.rpc('plaza_delete_day_all_cities', {
+                        date_to_delete: dateToDelete
+                    });
+                } else {
+                    // Régi RPC hívás a város-specifikus törléshez
+                    rpcCall = supabase.rpc('plaza_delete_day', {
+                        city_to_delete: cityToDelete,
+                        date_to_delete: dateToDelete
+                    });
+                }
+
+                const { error } = await rpcCall; // Várakozás az RPC hívásra
+
+                if (error) throw error;
+
+                deleteFeedback.textContent = "Sikeres törlés!";
+                deleteFeedback.className = "text-center h-4 mt-3 text-sm font-medium text-green-600";
+
+                // Várakozás a replikációra
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                await generateReport('daily'); // Frissítsük a nézetet
+
+                // Visszajelzés eltüntetése a try ágban
+                setTimeout(() => deleteFeedback.textContent = "", 3000);
+
+            } catch (error) {
+                console.error("❌ Törlési hiba:", error);
+                deleteFeedback.textContent = "Hiba a törlés során.";
+                deleteFeedback.className = "text-center h-4 mt-3 text-sm font-medium text-red-600";
+                // Visszajelzés eltüntetése a catch ágban
+                setTimeout(() => deleteFeedback.textContent = "", 3000);
+            } finally {
+                deleteDayBtn.disabled = false;
+
+                // A 'finally' blokkban csak a gomb engedélyezése marad,
+                // a visszajelzés eltüntetését a try/catch ágak kezelik.
+            }
+        });
+
+
+        // ÚJ: Custom Query Gomb Eseménykezelő
+        customQueryBtn.addEventListener('click', async () => {
+            customDateError.classList.add('hidden');
+            const start = customStartDate.value;
+            const end = customEndDate.value;
+
+            if (!start || !end) {
+                customDateError.textContent = "Kérlek add meg mindkét dátumot!";
+                customDateError.classList.remove('hidden');
+                return;
+            }
+
+            if (start > end) {
+                customDateError.textContent = "A kezdő dátum nem lehet későbbi, mint a záró dátum!";
+                customDateError.classList.remove('hidden');
+                return;
+            }
+
+            await generateReport('custom');
+        });
+        // --- MÓDOSÍTÁS VÉGE ---
+
+        // === Segédfüggvények (Többnyire változatlan) ===
+
+        function sumAggregates(agg1, agg2) {
+            const result = { ...agg1 };
+            for (const key in agg2) {
+                if (key !== 'date' && key !== 'city' && Object.prototype.hasOwnProperty.call(agg2, key) && typeof agg2[key] === 'number') {
+                    result[key] = (result[key] || 0) + agg2[key];
+                }
+            }
+            return result;
+        }
+
+        // --- MÓDOSÍTÁS: A getLastNDays funkciót kommentezzük, már nem használt ---
+        /*
+        function getLastNDays(n) {
+            const dates = [];
+            for (let i = 0; i < n; i++) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                dates.push(d.toISOString().split('T')[0]);
+            }
+            return dates.reverse();
+        }
+        */
+
+        /**
+         * MÓDOSÍTÁS: Ezt a függvényt átneveztük és kibővítettük,
+         * hogy egy címet is elfogadjon, és egy teljes, önálló táblázat-modult hozzon létre.
+         */
+        function createReportTableHTML(aggregatedData, tableTitle) {
+            let total = 0;
+            let rows = Object.keys(TASK_NAMES).map(taskKey => {
+                const count = aggregatedData[taskKey] || 0;
+                total += count;
+                return `
+                    <tr class="border-b border-gray-200">
+                        <td class="p-3 md:p-4 text-sm md:text-base font-medium text-gray-700">${TASK_NAMES[taskKey]}</td>
+                        <td class="p-3 md:p-4 text-sm md:text-base font-semibold text-gray-900 text-right">${count}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            return `
+                <!-- Ez egy rész-riport konténer -->
+                <div class="bg-white rounded-lg shadow border border-gray-200 max-w-2xl mx-auto mb-8"> 
+                    <!-- ÚJ: Alcím a táblázatnak -->
+                    <h4 class="text-lg font-semibold text-gray-700 p-4 border-b border-gray-200">${tableTitle}</h4>
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="p-3 md:p-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Esemény típusa</th>
+                                <th class="p-3 md:p-4 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Darabszám</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            ${rows}
+                            <tr class="bg-gray-100 font-bold">
+                                <td class="p-3 md:p-4 text-base text-gray-800">Összesen</td>
+                                <td class="p-3 md:p-4 text-base text-gray-900 text-right">${total}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function renderChart(aggregatedData, titleLabel) {
+            const ctx = reportChartCanvas.getContext('2d');
+            if (reportChartInstance) reportChartInstance.destroy();
+            const labels = Object.values(TASK_NAMES);
+            const data = Object.keys(TASK_NAMES).map(key => aggregatedData[key] || 0);
+
+            // --- MÓDOSÍTÁS KEZDETE ---
+            const backgroundColors = [
+                'rgba(59, 130, 246, 0.7)', 'rgba(14, 165, 233, 0.7)', 'rgba(220, 38, 38, 0.7)',
+                'rgba(234, 179, 8, 0.7)', 'rgba(75, 85, 99, 0.7)', 'rgba(147, 51, 234, 0.7)',
+                'rgba(22, 163, 74, 0.7)' // ÚJ (green-600)
+            ];
+            const borderColors = [
+                'rgba(59, 130, 246, 1)', 'rgba(14, 165, 233, 1)', 'rgba(220, 38, 38, 1)',
+                'rgba(234, 179, 8, 1)', 'rgba(75, 85, 99, 1)', 'rgba(147, 51, 234, 1)',
+                'rgba(22, 163, 74, 1)' // ÚJ (green-600)
+            ];
+            // --- MÓDOSÍTÁS VÉGE ---
+
+            reportChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Darabszám', data, backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 1 }] },
+                options: {
+                    responsive: true, maintainAspectRatio: true,
+                    plugins: { legend: { display: false }, title: { display: true, text: titleLabel, font: { size: 16 } } },
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                }
+            });
+        }
+
+        // FEJLESZTÉS: PDF EXPORT LOGIKA
+        downloadPdfBtn.addEventListener('click', generatePDF);
+        async function generatePDF() {
+            if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') { return; }
+
+            const { jsPDF } = window.jspdf;
+            const reportArea = document.getElementById('admin-report-area');
+            const chartContainer = reportChartCanvas.parentElement;
+            let tempImg = null;
+
+            pdfLoadingMessage.textContent = "PDF készítése, kérem várjon...";
+
+            try {
+                // 1. Chart.js vászon átalakítása statikus képpé
+                if (reportChartInstance) {
+                    const imgData = reportChartInstance.toBase64Image();
+                    tempImg = document.createElement('img');
+                    tempImg.src = imgData;
+                    tempImg.style.width = reportChartCanvas.style.width || '100%';
+                    tempImg.style.height = reportChartCanvas.style.height || 'auto';
+                    tempImg.style.display = 'block';
+                    tempImg.style.maxWidth = '100%';
+
+                    // 2. Vászon elrejtése, kép beillesztése
+                    reportChartCanvas.style.display = 'none';
+                    chartContainer.appendChild(tempImg);
+                }
+
+                // 3. html2canvas futtatása a statikus képpel
+                const canvas = await html2canvas(reportArea, { scale: 2, logging: false, useCORS: true });
+                const imgData = canvas.toDataURL('image/png');
+
+                // 4. PDF generálása
+                const doc = new jsPDF('p', 'mm', 'a4');
+                const imgProps = doc.getImageProperties(imgData);
+                const pdfPageWidth = doc.internal.pageSize.getWidth();
+                const pdfPageHeight = doc.internal.pageSize.getHeight();
+                const ratio = Math.min((pdfPageWidth - 20) / imgProps.width, (pdfPageHeight - 20) / imgProps.height);
+                const imgWidth = imgProps.width * ratio;
+                const imgHeight = imgProps.height * ratio;
+                const x = (pdfPageWidth - imgWidth) / 2;
+                const y = 10;
+                doc.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
+                const todayStr = getTodayString();
+                doc.save(`riport_${adminCityFilter.value}_${todayStr}.pdf`);
+
+            } catch (error) {
+                console.error("❌ PDF generálási hiba:", error);
+                pdfLoadingMessage.textContent = "Hiba a PDF készítése közben.";
+            } finally {
+                // 5. Cleanup: Eredeti állapot visszaállítása
+                if (tempImg) {
+                    chartContainer.removeChild(tempImg);
+                }
+                reportChartCanvas.style.display = 'block';
+                pdfLoadingMessage.textContent = "";
+            }
+        }
+
+        // === CLEANUP APP UNLOAD-NÁL ===
+        window.addEventListener('beforeunload', () => {
+            stopPolling();
+        });
+
+        // === VISIBILITY CHANGE KEZELÉS ===
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                console.log("📱 App háttérbe került, polling folytatódik...");
+                // Polling folytatódik...
+            } else {
+                console.log("📱 App előtérbe került.");
+                // Ha nem polling, indítsuk újra
+                if (!isPolling && isSupabaseReady) {
+                    startPolling();
+                }
+                // Azonnali adatfrissítés és várólista-feldolgozás
+                if (isSupabaseReady) {
+                    pollData();
+                }
+            }
+        });
+
+        // === INDÍTÁS ===
+        initApp();
+
+    </script>
+</body>
+
+</html>
