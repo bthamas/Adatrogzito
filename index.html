@@ -1501,21 +1501,21 @@
 
             return `
                 <!-- Ez egy rész-riport konténer -->
-                <div class="bg-white rounded-lg shadow border border-gray-200 w-full mx-auto mb-8">  <!-- MÓDOSÍTÁS: max-w-2xl törölve, w-full helyette -->
+                <div class="bg-white rounded-lg shadow border border-gray-200 w-full mx-auto mb-6 break-inside-avoid">  <!-- MÓDOSÍTÁS: break-inside-avoid, mb-6 -->
                     <!-- ÚJ: Alcím a táblázatnak -->
-                    <h4 class="text-sm font-semibold text-gray-700 p-2 border-b border-gray-200">${tableTitle}</h4>
-                    <table class="w-full table-fixed"> <!-- MÓDOSÍTÁS: table-fixed a szélesség tartásához -->
+                    <h4 class="text-xs font-semibold text-gray-700 p-2 border-b border-gray-200">${tableTitle}</h4>
+                    <table class="w-full table-fixed">
                         <thead class="bg-gray-50">
                             <tr>
-                                <th class="w-2/3 p-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Esemény típusa</th>
-                                <th class="w-1/3 p-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Darab</th>
+                                <th class="w-2/3 p-1.5 text-left text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Esemény típusa</th> <!-- MÓDOSÍTÁS: p-1.5, text-[10px] -->
+                                <th class="w-1/3 p-1.5 text-right text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Darab</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-200">
                             ${rows}
                             <tr class="bg-gray-100 font-bold">
-                                <td class="p-2 text-sm text-gray-800">Összesen</td>
-                                <td class="p-2 text-sm text-gray-900 text-right">${total}</td>
+                                <td class="p-1.5 text-xs text-gray-800">Összesen</td>
+                                <td class="p-1.5 text-xs text-gray-900 text-right">${total}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1526,8 +1526,8 @@
         function createRowHTML(name, count) {
             return `
                 <tr class="border-b border-gray-200">
-                    <td class="p-2 text-xs md:text-sm font-medium text-gray-700 break-words">${name}</td>
-                    <td class="p-2 text-xs md:text-sm font-semibold text-gray-900 text-right">${count}</td>
+                    <td class="p-1.5 text-[11px] font-medium text-gray-700 break-words">${name}</td> <!-- MÓDOSÍTÁS: kisebb betű -->
+                    <td class="p-1.5 text-[11px] font-semibold text-gray-900 text-right">${count}</td>
                 </tr>
             `;
         }
@@ -1640,7 +1640,13 @@
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { position: 'bottom' } },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            display: true, // MÓDOSÍTÁS: Mindig látható
+                            labels: { boxWidth: 12, font: { size: 9 } }
+                        }
+                    },
                     scales: { y: { beginAtZero: true } }
                 }
             });
@@ -1676,7 +1682,13 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom' } },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            display: true, // MÓDOSÍTÁS: Mindig látható
+                            labels: { boxWidth: 12, font: { size: 9 } }
+                        }
+                    },
                     scales: { y: { beginAtZero: true } }
                 }
             });
@@ -1725,40 +1737,85 @@
                     }
                 });
 
-                // 3. html2canvas futtatása a statikus képpel
-                // FEJLESZTÉS: PDF Layout és Méret optimalizálás
-                // Ideiglenesen kikényszerítjük a széles nézetet, hogy ne mobil nézetet fotózzon
-                const originalWidth = reportArea.style.width;
-                const originalMaxWidth = reportArea.style.maxWidth;
-                reportArea.style.width = '1120px'; // Kb A4 arány (vagy desktop szélesség)
-                reportArea.style.maxWidth = 'none';
-
-                // Scale csökkentése és JPEG használata a méret miatt
-                const canvas = await html2canvas(reportArea, { scale: 1.5, logging: false, useCORS: true, windowWidth: 1200 });
-                const imgData = canvas.toDataURL('image/jpeg', 0.85); // PNG helyett JPEG 0.85 minőség
-                // Visszaállítás
-                reportArea.style.width = originalWidth;
-                reportArea.style.maxWidth = originalMaxWidth;
+                // 3. html2canvas futtatása "OKOS" módon: Kártyánként
 
                 const pdf = new jspdf.jsPDF('p', 'mm', 'a4');
-                const imgProps = pdf.getImageProperties(imgData);
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pageHeight = pdf.internal.pageSize.getHeight();
-                const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                const pageWidth = pdf.internal.pageSize.getWidth();     // ~210mm
+                const pageHeight = pdf.internal.pageSize.getHeight();   // ~297mm
+                const margin = 10;
+                const contentWidth = pageWidth - (2 * margin);
 
-                let heightLeft = pdfHeight;
-                let position = 0;
+                let currentY = margin;
 
-                // Első oldal hozzáadása
-                pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-                heightLeft -= pageHeight;
+                // 3.0 Cím hozzáadása manuálisan
+                const titleText = reportTitle.textContent;
+                pdf.setFontSize(16);
+                pdf.text(titleText, pageWidth / 2, currentY, { align: 'center' });
+                currentY += 15; // Hely a cím után
 
-                // További oldalak, ha nem fér ki egyre
-                while (heightLeft > 0) {
-                    position -= pageHeight; // Minden új oldalnál feljebb toljuk a képet
-                    pdf.addPage();
-                    pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-                    heightLeft -= pageHeight;
+                // 3.1 Kártyák összegyűjtése
+                // MÓDOSÍTÁS: Táblák és Chartok KÜLÖN csoportosítása
+                const tableCards = document.querySelectorAll('#report-content > .bg-white.rounded-lg');
+                const chartCards = document.querySelectorAll('#admin-report-area .md\\:col-span-2.bg-white.rounded-lg.shadow-md');
+
+                // 3.2 TÁBLÁK hozzáadása (1. oldal)
+                for (let i = 0; i < tableCards.length; i++) {
+                    const card = tableCards[i];
+
+                    const originalWidth = card.style.width;
+                    card.style.width = '1120px';
+                    const originalMargin = card.style.margin;
+                    card.style.margin = '0';
+
+                    const canvas = await html2canvas(card, { scale: 1.5, logging: false, useCORS: true, windowWidth: 1200 });
+                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+
+                    card.style.width = originalWidth;
+                    card.style.margin = originalMargin;
+
+                    const imgProps = pdf.getImageProperties(imgData);
+                    const imgHeightInPdf = (imgProps.height * contentWidth) / imgProps.width;
+
+                    if (currentY + imgHeightInPdf > pageHeight - margin) {
+                        pdf.addPage();
+                        currentY = margin;
+                    }
+
+                    pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeightInPdf);
+                    currentY += imgHeightInPdf + 3;
+                }
+
+                // 3.3 GRAFIKONOK hozzáadása - ÚJ OLDAL
+                pdf.addPage();
+                currentY = margin;
+
+                // Grafikonokat KISEBB méretben (scale 1.0) és 2x2 grid-ben (ha lehet)
+                for (let i = 0; i < chartCards.length; i++) {
+                    const card = chartCards[i];
+
+                    const originalWidth = card.style.width;
+                    card.style.width = '1120px';
+                    const originalMargin = card.style.margin;
+                    card.style.margin = '0';
+
+                    // Kisebb scale a grafikonoknak
+                    const canvas = await html2canvas(card, { scale: 1.0, logging: false, useCORS: true, windowWidth: 1200 });
+                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+
+                    card.style.width = originalWidth;
+                    card.style.margin = originalMargin;
+
+                    const imgProps = pdf.getImageProperties(imgData);
+                    const imgHeightInPdf = (imgProps.height * contentWidth) / imgProps.width;
+
+                    // Ha nem fér, új oldal (de 4 grafikonnak el kell férnie 1 oldalon)
+                    if (currentY + imgHeightInPdf > pageHeight - margin) {
+                        pdf.addPage();
+                        currentY = margin;
+                    }
+
+                    pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeightInPdf);
+                    currentY += imgHeightInPdf + 2; // Még szűkebb térköz
                 }
 
                 // Fájlnév generálás
