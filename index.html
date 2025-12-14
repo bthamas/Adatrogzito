@@ -311,13 +311,49 @@
             </div>
 
             <!-- Riport tartalma -->
-            <div id="admin-report-area">
-                <h3 id="report-title" class="text-xl font-semibold text-center text-gray-700 mb-6"></h3>
-                <div class="mb-8 w-full max-w-2xl mx-auto">
-                    <!-- FEJLESZTÉS: A PDF generáláshoz ide kerül a statikus kép -->
-                    <canvas id="report-chart"></canvas>
+            <div id="admin-report-area" class="w-full max-w-6xl mx-auto">
+                <h3 id="report-title" class="text-2xl font-bold text-center text-gray-800 mb-8"></h3>
+
+                <!-- DASHBOARD GRID -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+
+                    <!-- 1. Bal oszlop: Táblázat -->
+                    <div id="report-content" class="overflow-x-auto"></div>
+
+                    <!-- 2. Jobb oszlop: Eloszlás (Fánk) -->
+                    <div
+                        class="bg-white rounded-lg shadow-md border border-gray-200 p-4 flex flex-col items-center justify-center">
+                        <h4 class="text-lg font-semibold text-gray-700 mb-4">Tevékenység Megoszlás</h4>
+                        <div class="w-full max-w-xs h-64">
+                            <canvas id="distribution-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 3. Teljes szélesség: Összesített Oszlop (Meglévő) -->
+                    <div class="md:col-span-2 bg-white rounded-lg shadow-md border border-gray-200 p-6">
+                        <h4 class="text-lg font-semibold text-gray-700 mb-4 text-center">Összesített Darabszámok</h4>
+                        <div class="w-full h-80">
+                            <canvas id="report-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 4. Teljes szélesség: Trend (Vonal) -->
+                    <div class="md:col-span-2 bg-white rounded-lg shadow-md border border-gray-200 p-6">
+                        <h4 class="text-lg font-semibold text-gray-700 mb-4 text-center">Napi Trendek</h4>
+                        <div class="w-full h-80">
+                            <canvas id="trend-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 5. Teljes szélesség: Város összehasonlítás (Csoportosított) -->
+                    <div class="md:col-span-2 bg-white rounded-lg shadow-md border border-gray-200 p-6">
+                        <h4 class="text-lg font-semibold text-gray-700 mb-4 text-center">Városok Összehasonlítása</h4>
+                        <div class="w-full h-80">
+                            <canvas id="comparison-chart"></canvas>
+                        </div>
+                    </div>
+
                 </div>
-                <div id="report-content" class="overflow-x-auto"></div>
             </div>
 
             <!-- ÚJ: Nap Törlése Szekció (csak Napi nézetben) -->
@@ -378,6 +414,15 @@
         const periodButtons = document.querySelectorAll('.period-btn');
         const reportChartCanvas = document.getElementById('report-chart');
         let reportChartInstance = null;
+
+        // ÚJ CHARTOK
+        const trendChartCanvas = document.getElementById('trend-chart');
+        let trendChartInstance = null;
+        const distributionChartCanvas = document.getElementById('distribution-chart');
+        let distributionChartInstance = null;
+        const comparisonChartCanvas = document.getElementById('comparison-chart');
+        let comparisonChartInstance = null;
+
         const downloadPdfBtn = document.getElementById('download-pdf-btn');
         const pdfLoadingMessage = document.getElementById('pdf-loading-message');
         const pollingIndicator = document.getElementById('polling-indicator');
@@ -1129,7 +1174,11 @@
             adminLoading.classList.remove('hidden');
             reportTitle.textContent = "";
             reportContent.innerHTML = "";
+            // Összes chart törlése
             if (reportChartInstance) reportChartInstance.destroy();
+            if (trendChartInstance) trendChartInstance.destroy();
+            if (distributionChartInstance) distributionChartInstance.destroy();
+            if (comparisonChartInstance) comparisonChartInstance.destroy();
 
             let aggregatedData = createEmptyDayData();
             let title = "";
@@ -1255,8 +1304,25 @@
                     reportContent.innerHTML = html;
 
                     // A grafikont továbbra is csak a teljes összesítésről rendereljük
-                    renderChart(totalAggregatedData, title);
+                    renderChart(totalAggregatedData, "Összesített Statisztika");
                 }
+
+                // --- DASHBOARD 2.0 RENDERELÉS ---
+                // Minden esetben meghívjuk az új grafikonokat is
+                // Aggregált (Distribution)
+                let finalAggregatedForDist = createEmptyDayData();
+                if (reportData.length > 0) {
+                    reportData.forEach(day => finalAggregatedForDist = sumAggregates(finalAggregatedForDist, day));
+                }
+                renderDistributionChart(finalAggregatedForDist);
+
+                // Nyers (Trend és Comparison)
+                // Csak akkor van értelme, ha van adat
+                if (reportData.length > 0) {
+                    renderTrendChart(reportData);
+                    renderCityComparisonChart(reportData);
+                }
+                // --------------------------------
                 // --- MÓDOSÍTÁS VÉGE ---
 
             } catch (error) {
@@ -1459,7 +1525,127 @@
             });
         }
 
-        // FEJLESZTÉS: PDF EXPORT LOGIKA
+        // FEJLESZTÉS: Dashboard 2.0 Render Functions
+
+        const CHART_COLORS = {
+            bg: [
+                'rgba(59, 130, 246, 0.7)', 'rgba(14, 165, 233, 0.7)', 'rgba(220, 38, 38, 0.7)',
+                'rgba(234, 179, 8, 0.7)', 'rgba(75, 85, 99, 0.7)', 'rgba(147, 51, 234, 0.7)',
+                'rgba(22, 163, 74, 0.7)'
+            ],
+            border: [
+                'rgba(59, 130, 246, 1)', 'rgba(14, 165, 233, 1)', 'rgba(220, 38, 38, 1)',
+                'rgba(234, 179, 8, 1)', 'rgba(75, 85, 99, 1)', 'rgba(147, 51, 234, 1)',
+                'rgba(22, 163, 74, 1)'
+            ]
+        };
+
+        function renderDistributionChart(data) {
+            const ctx = distributionChartCanvas.getContext('2d');
+            if (distributionChartInstance) distributionChartInstance.destroy();
+
+            const values = Object.values(TASK_NAMES).map((name, index) => {
+                const key = Object.keys(TASK_NAMES)[index];
+                return data[key] || 0;
+            });
+
+            distributionChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.values(TASK_NAMES),
+                    datasets: [{
+                        data: values,
+                        backgroundColor: CHART_COLORS.bg,
+                        borderColor: CHART_COLORS.border,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
+                    }
+                }
+            });
+        }
+
+        function renderTrendChart(rawData) {
+            const ctx = trendChartCanvas.getContext('2d');
+            if (trendChartInstance) trendChartInstance.destroy();
+
+            // 1. Dátumok kigyűjtése és rendezése
+            const dates = [...new Set(rawData.map(d => d.date))].sort();
+
+            // 2. Datasetek előkészítése minden task típushoz
+            const datasets = Object.keys(TASK_NAMES).map((taskKey, index) => {
+                const data = dates.map(date => {
+                    // Megkeressük az adott naphoz tartozó összes rekordot (lehet több város is)
+                    const entries = rawData.filter(d => d.date === date);
+                    // Összeadjuk az értékeket
+                    return entries.reduce((sum, entry) => sum + (entry[taskKey] || 0), 0);
+                });
+
+                return {
+                    label: TASK_NAMES[taskKey],
+                    data: data,
+                    borderColor: CHART_COLORS.border[index],
+                    backgroundColor: CHART_COLORS.bg[index],
+                    tension: 0.3, // Kicsit simított vonalak
+                    fill: false
+                };
+            });
+
+            trendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: { labels: dates, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { position: 'bottom' } },
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        }
+
+        function renderCityComparisonChart(rawData) {
+            const ctx = comparisonChartCanvas.getContext('2d');
+            if (comparisonChartInstance) comparisonChartInstance.destroy();
+
+            const cities = ['gyor', 'pecs', 'kaposvar']; // Fix sorrend
+            const cityLabels = cities.map(c => CITY_NAMES[c]);
+
+            // Datasetek: Minden task típus egy oszlopcsoport lesz
+            const datasets = Object.keys(TASK_NAMES).map((taskKey, index) => {
+                const data = cities.map(city => {
+                    // Adott város összes adata a lekérdezett időszakban
+                    const cityEntries = rawData.filter(d => d.city === city);
+                    return cityEntries.reduce((sum, entry) => sum + (entry[taskKey] || 0), 0);
+                });
+
+                return {
+                    label: TASK_NAMES[taskKey],
+                    data: data,
+                    backgroundColor: CHART_COLORS.bg[index],
+                    borderColor: CHART_COLORS.border[index],
+                    borderWidth: 1
+                };
+            });
+
+            comparisonChartInstance = new Chart(ctx, {
+                type: 'bar', // Grouped bar alapból
+                data: { labels: cityLabels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } },
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        }
+
+        // FEJLESZTÉS: PDF EXPORT LOGIKA (Frissítve)
         downloadPdfBtn.addEventListener('click', generatePDF);
         async function generatePDF() {
             if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') { return; }
@@ -1472,20 +1658,35 @@
             pdfLoadingMessage.textContent = "PDF készítése, kérem várjon...";
 
             try {
-                // 1. Chart.js vászon átalakítása statikus képpé
-                if (reportChartInstance) {
-                    const imgData = reportChartInstance.toBase64Image();
-                    tempImg = document.createElement('img');
-                    tempImg.src = imgData;
-                    tempImg.style.width = reportChartCanvas.style.width || '100%';
-                    tempImg.style.height = reportChartCanvas.style.height || 'auto';
-                    tempImg.style.display = 'block';
-                    tempImg.style.maxWidth = '100%';
+                // 1. Chart.js vásznak átalakítása képpé (MIND)
+                const chartCanvases = [reportChartCanvas, trendChartCanvas, distributionChartCanvas, comparisonChartCanvas];
+                let tempImages = [];
 
-                    // 2. Vászon elrejtése, kép beillesztése
-                    reportChartCanvas.style.display = 'none';
-                    chartContainer.appendChild(tempImg);
-                }
+                chartCanvases.forEach(canvas => {
+                    if (canvas && canvas.offsetParent !== null) { // Csak ha látható
+                        // Chart instance keresése (kicsit hacky, de működik, ha tudjuk melyik melyik)
+                        // Egyszerűbb: toBase64Image() hívása a vásznon lévő instance-ra
+                        let instance;
+                        if (canvas.id === 'report-chart') instance = reportChartInstance;
+                        else if (canvas.id === 'trend-chart') instance = trendChartInstance;
+                        else if (canvas.id === 'distribution-chart') instance = distributionChartInstance;
+                        else if (canvas.id === 'comparison-chart') instance = comparisonChartInstance;
+
+                        if (instance) {
+                            const imgData = instance.toBase64Image();
+                            const tempImg = document.createElement('img');
+                            tempImg.src = imgData;
+                            // Stílus másolása a mérethez
+                            tempImg.style.width = '100%';
+                            tempImg.style.display = 'block';
+
+                            // Csere a DOM-ban
+                            canvas.style.display = 'none';
+                            canvas.parentElement.appendChild(tempImg);
+                            tempImages.push({ canvas: canvas, img: tempImg });
+                        }
+                    }
+                });
 
                 // 3. html2canvas futtatása a statikus képpel
                 const canvas = await html2canvas(reportArea, { scale: 2, logging: false, useCORS: true });
@@ -1510,10 +1711,12 @@
                 pdfLoadingMessage.textContent = "Hiba a PDF készítése közben.";
             } finally {
                 // 5. Cleanup: Eredeti állapot visszaállítása
-                if (tempImg) {
-                    chartContainer.removeChild(tempImg);
+                if (tempImages.length > 0) {
+                    tempImages.forEach(item => {
+                        if (item.img.parentNode) item.img.parentNode.removeChild(item.img);
+                        item.canvas.style.display = 'block';
+                    });
                 }
-                reportChartCanvas.style.display = 'block';
                 pdfLoadingMessage.textContent = "";
             }
         }
