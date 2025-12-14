@@ -1756,7 +1756,22 @@
                 // 3.1 Kártyák összegyűjtése
                 // MÓDOSÍTÁS: Táblák és Chartok KÜLÖN csoportosítása
                 const tableCards = document.querySelectorAll('#report-content > .bg-white.rounded-lg');
-                const chartCards = document.querySelectorAll('#admin-report-area .md\\:col-span-2.bg-white.rounded-lg.shadow-md');
+
+                // MINDEN chart kártya: ID alapján keressük meg a canvas parent-eket
+                const chartCards = [];
+                ['report-chart', 'distribution-chart', 'trend-chart', 'comparison-chart'].forEach(canvasId => {
+                    const canvas = document.getElementById(canvasId);
+                    if (canvas) {
+                        // Keressük meg a hozzá tartozó card container-t (az első bg-white parent-et)
+                        let parent = canvas.parentElement;
+                        while (parent && !parent.classList.contains('bg-white')) {
+                            parent = parent.parentElement;
+                        }
+                        if (parent && parent.classList.contains('rounded-lg')) {
+                            chartCards.push(parent);
+                        }
+                    }
+                });
 
                 // 3.2 TÁBLÁK hozzáadása (1. oldal)
                 for (let i = 0; i < tableCards.length; i++) {
@@ -1798,8 +1813,8 @@
                     const originalMargin = card.style.margin;
                     card.style.margin = '0';
 
-                    // Kisebb scale a grafikonoknak
-                    const canvas = await html2canvas(card, { scale: 1.0, logging: false, useCORS: true, windowWidth: 1200 });
+                    // Kisebb scale a grafikonoknak (de nem túl kicsi)
+                    const canvas = await html2canvas(card, { scale: 1.2, logging: false, useCORS: true, windowWidth: 1200 });
                     const imgData = canvas.toDataURL('image/jpeg', 0.85);
 
                     card.style.width = originalWidth;
