@@ -1501,7 +1501,7 @@
 
             return `
                 <!-- Ez egy rész-riport konténer -->
-                <div class="bg-white rounded-lg shadow border border-gray-200 w-full mx-auto mb-8">  <!-- MÓDOSÍTÁS: max-w-2xl törölve, w-full helyette -->
+                <div class="bg-white rounded-lg shadow border border-gray-200 max-w-2xl mx-auto mb-8"> 
                     <!-- ÚJ: Alcím a táblázatnak -->
                     <h4 class="text-sm font-semibold text-gray-700 p-2 border-b border-gray-200">${tableTitle}</h4>
                     <table class="w-full table-fixed"> <!-- MÓDOSÍTÁS: table-fixed a szélesség tartásához -->
@@ -1726,37 +1726,22 @@
                 });
 
                 // 3. html2canvas futtatása a statikus képpel
-                // FEJLESZTÉS: PDF Layout és Méret optimalizálás
-                // Ideiglenesen kikényszerítjük a széles nézetet, hogy ne mobil nézetet fotózzon
-                const originalWidth = reportArea.style.width;
-                const originalMaxWidth = reportArea.style.maxWidth;
-                reportArea.style.width = '1120px'; // Kb A4 arány (vagy desktop szélesség)
-                reportArea.style.maxWidth = 'none';
+                const canvas = await html2canvas(reportArea, { scale: 2, logging: false, useCORS: true });
+                const imgData = canvas.toDataURL('image/png');
 
-                // Scale csökkentése és JPEG használata a méret miatt
-                const canvas = await html2canvas(reportArea, { scale: 1.5, logging: false, useCORS: true, windowWidth: 1200 });
-                const imgData = canvas.toDataURL('image/jpeg', 0.85); // PNG helyett JPEG 0.85 minőség
-
-                // Visszaállítás
-                reportArea.style.width = originalWidth;
-                reportArea.style.maxWidth = originalMaxWidth;
-
-                const pdf = new jsPDF('p', 'mm', 'a4');
-                const imgProps = pdf.getImageProperties(imgData);
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-                // Többoldalas logika (egyszerűsített: ha nem fér ki, akkor új oldal, de itt most 
-                // a kép scaleről van szó. Ha túl hosszú, akkor összenyomja egy oldalra alapból az addImage.
-                // A felhasználó "ne legyen üres kocka" kérése miatt a szélesség a lényeg.)
-
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-
-                // Fájlnév generálás
-                const dateStr = new Date().toISOString().split('T')[0];
-                pdf.save(`riport_${adminCityFilter.value}_${dateStr}.pdf`);
-
-                pdfLoadingMessage.textContent = "Sikeres letöltés!";
+                // 4. PDF generálása
+                const doc = new jsPDF('p', 'mm', 'a4');
+                const imgProps = doc.getImageProperties(imgData);
+                const pdfPageWidth = doc.internal.pageSize.getWidth();
+                const pdfPageHeight = doc.internal.pageSize.getHeight();
+                const ratio = Math.min((pdfPageWidth - 20) / imgProps.width, (pdfPageHeight - 20) / imgProps.height);
+                const imgWidth = imgProps.width * ratio;
+                const imgHeight = imgProps.height * ratio;
+                const x = (pdfPageWidth - imgWidth) / 2;
+                const y = 10;
+                doc.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
+                const todayStr = getTodayString();
+                doc.save(`riport_${adminCityFilter.value}_${todayStr}.pdf`);
 
             } catch (error) {
                 console.error("❌ PDF generálási hiba:", error);
