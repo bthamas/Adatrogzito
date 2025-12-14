@@ -1736,21 +1736,30 @@
                 // Scale csökkentése és JPEG használata a méret miatt
                 const canvas = await html2canvas(reportArea, { scale: 1.5, logging: false, useCORS: true, windowWidth: 1200 });
                 const imgData = canvas.toDataURL('image/jpeg', 0.85); // PNG helyett JPEG 0.85 minőség
-
                 // Visszaállítás
                 reportArea.style.width = originalWidth;
                 reportArea.style.maxWidth = originalMaxWidth;
 
-                const pdf = new jsPDF('p', 'mm', 'a4');
+                const pdf = new jspdf.jsPDF('p', 'mm', 'a4');
                 const imgProps = pdf.getImageProperties(imgData);
                 const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
                 const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
-                // Többoldalas logika (egyszerűsített: ha nem fér ki, akkor új oldal, de itt most 
-                // a kép scaleről van szó. Ha túl hosszú, akkor összenyomja egy oldalra alapból az addImage.
-                // A felhasználó "ne legyen üres kocka" kérése miatt a szélesség a lényeg.)
+                let heightLeft = pdfHeight;
+                let position = 0;
 
-                pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                // Első oldal hozzáadása
+                pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
+                heightLeft -= pageHeight;
+
+                // További oldalak, ha nem fér ki egyre
+                while (heightLeft > 0) {
+                    position -= pageHeight; // Minden új oldalnál feljebb toljuk a képet
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
+                    heightLeft -= pageHeight;
+                }
 
                 // Fájlnév generálás
                 const dateStr = new Date().toISOString().split('T')[0];
