@@ -1748,89 +1748,87 @@
                 let currentY = margin;
 
                 // 3.0 Cím hozzáadása manuálisan
-                const titleText = reportTitle.textContent;
-                pdf.setFontSize(16);
-                pdf.text(titleText, pageWidth / 2, currentY, { align: 'center' });
-                currentY += 15; // Hely a cím után
 
-                // 3.1 Kártyák összegyűjtése
-                // MÓDOSÍTÁS: Táblák és Chartok KÜLÖN csoportosítása
+                // 3.1 Cím
+                const titleText = reportTitle.textContent;
+                pdf.setFontSize(14);
+                pdf.setFont(undefined, 'bold');
+                pdf.text(titleText, pageWidth / 2, currentY, { align: 'center' });
+                currentY += 10;
+
+                // 3.2 TÁBLÁK renderelése (bal oldal vagy teljes szélesség)
                 const tableCards = document.querySelectorAll('#report-content > .bg-white.rounded-lg');
 
-                // MINDEN chart kártya: ID alapján keressük meg a canvas parent-eket
-                const chartCards = [];
-                ['report-chart', 'distribution-chart', 'trend-chart', 'comparison-chart'].forEach(canvasId => {
-                    const canvas = document.getElementById(canvasId);
-                    if (canvas) {
-                        // Keressük meg a hozzá tartozó card container-t (az első bg-white parent-et)
-                        let parent = canvas.parentElement;
-                        while (parent && !parent.classList.contains('bg-white')) {
-                            parent = parent.parentElement;
-                        }
-                        if (parent && parent.classList.contains('rounded-lg')) {
-                            chartCards.push(parent);
-                        }
-                    }
-                });
+                // Kisebb méretű táblák (40% szélesség a PDF-ben, hogy jobbra férjen a chart)
+                const tableWidthInPdf = contentWidth * 0.55; // 55% bal oldalon
 
-                // 3.2 TÁBLÁK hozzáadása (1. oldal)
                 for (let i = 0; i < tableCards.length; i++) {
                     const card = tableCards[i];
 
                     const originalWidth = card.style.width;
-                    card.style.width = '1120px';
+                    card.style.width = '800px'; // Kisebb szélesség
                     const originalMargin = card.style.margin;
                     card.style.margin = '0';
 
-                    const canvas = await html2canvas(card, { scale: 1.5, logging: false, useCORS: true, windowWidth: 1200 });
+                    const canvas = await html2canvas(card, { scale: 1.3, logging: false, useCORS: true, windowWidth: 1000 });
                     const imgData = canvas.toDataURL('image/jpeg', 0.85);
 
                     card.style.width = originalWidth;
                     card.style.margin = originalMargin;
 
                     const imgProps = pdf.getImageProperties(imgData);
-                    const imgHeightInPdf = (imgProps.height * contentWidth) / imgProps.width;
+                    const imgHeightInPdf = (imgProps.height * tableWidthInPdf) / imgProps.width;
 
+                    // ÚJ OLDAL, ha nem fér
                     if (currentY + imgHeightInPdf > pageHeight - margin) {
                         pdf.addPage();
                         currentY = margin;
                     }
 
-                    pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeightInPdf);
+                    pdf.addImage(imgData, 'JPEG', margin, currentY, tableWidthInPdf, imgHeightInPdf);
                     currentY += imgHeightInPdf + 3;
                 }
 
-                // 3.3 GRAFIKONOK hozzáadása - ÚJ OLDAL
-                pdf.addPage();
-                currentY = margin;
-
-                // Grafikonokat KISEBB méretben (scale 1.0) és 2x2 grid-ben (ha lehet)
-                for (let i = 0; i < chartCards.length; i++) {
-                    const card = chartCards[i];
-
-                    const originalWidth = card.style.width;
-                    card.style.width = '1120px';
-                    const originalMargin = card.style.margin;
-                    card.style.margin = '0';
-
-                    // Kisebb scale a grafikonoknak (de nem túl kicsi)
-                    const canvas = await html2canvas(card, { scale: 1.2, logging: false, useCORS: true, windowWidth: 1200 });
-                    const imgData = canvas.toDataURL('image/jpeg', 0.85);
-
-                    card.style.width = originalWidth;
-                    card.style.margin = originalMargin;
-
-                    const imgProps = pdf.getImageProperties(imgData);
-                    const imgHeightInPdf = (imgProps.height * contentWidth) / imgProps.width;
-
-                    // Ha nem fér, új oldal (de 4 grafikonnak el kell férnie 1 oldalon)
-                    if (currentY + imgHeightInPdf > pageHeight - margin) {
-                        pdf.addPage();
-                        currentY = margin;
+                // 3.3 ELOSZLÁS GRAFIKON (Jobbra vagy alulra)
+                const distributionCanvas = document.getElementById('distribution-chart');
+                if (distributionCanvas) {
+                    let chartCard = distributionCanvas.parentElement;
+                    while (chartCard && !chartCard.classList.contains('bg-white')) {
+                        chartCard = chartCard.parentElement;
                     }
 
-                    pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeightInPdf);
-                    currentY += imgHeightInPdf + 2; // Még szűkebb térköz
+                    if (chartCard) {
+                        const originalWidth = chartCard.style.width;
+                        chartCard.style.width = '600px'; // Kisebb kártya
+                        const originalMargin = chartCard.style.margin;
+                        chartCard.style.margin = '0';
+
+                        const canvas = await html2canvas(chartCard, { scale: 1.3, logging: false, useCORS: true, windowWidth: 800 });
+                        const imgData = canvas.toDataURL('image/jpeg', 0.85);
+
+                        chartCard.style.width = originalWidth;
+                        chartCard.style.margin = originalMargin;
+
+                        const imgProps = pdf.getImageProperties(imgData);
+                        const chartWidthInPdf = contentWidth * 0.4; // 40% szélesség
+                        const chartHeightInPdf = (imgProps.height * chartWidthInPdf) / imgProps.width;
+
+                        // Jobbra pozicionáljuk (margin + tableWidth + köztes tér)
+                        const chartX = margin + tableWidthInPdf + 5;
+                        const chartY = margin + 10; // Cím után
+
+                        // Ellenőrizzük, fér-e az oldalra
+                        if (chartY + chartHeightInPdf <= pageHeight - margin) {
+                            pdf.addImage(imgData, 'JPEG', chartX, chartY, chartWidthInPdf, chartHeightInPdf);
+                        } else {
+                            // Ha nem fér jobbra, tegyük alulra
+                            if (currentY + chartHeightInPdf > pageHeight - margin) {
+                                pdf.addPage();
+                                currentY = margin;
+                            }
+                            pdf.addImage(imgData, 'JPEG', margin, currentY, chartWidthInPdf, chartHeightInPdf);
+                        }
+                    }
                 }
 
                 // Fájlnév generálás
